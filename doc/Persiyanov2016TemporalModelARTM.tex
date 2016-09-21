@@ -1,0 +1,512 @@
+\documentclass[12pt,twoside]{article}
+\usepackage{jmlda}
+\usepackage[english]{babel}
+\usepackage[T2A]{fontenc}
+\usepackage[cp1251]{inputenc}
+\usepackage[russian]{babel}
+\usepackage{hyperref}
+
+
+\bibliographystyle{gost780s}
+
+
+
+%\NOREVIEWERNOTES
+\title
+    {Темпоральная тематическая модель коллекции пресс-релизов}
+\author
+    {Персиянов~Д.\,А.$^1$, Дойков~Н.\,В.$^2$, Воронцов~К.\,В.$^2$} % список авторов, выводимый в заголовок; не нужен, если он не отличается от основного
+\thanks
+   {Научный руководитель:  Стрижов~В.\,В. 
+   Задачу поставил:  Воронцов~К.\,В.
+    Консультант:  Дойков~Н.\,В.}
+\email
+    {persiyanov@phystech.edu}
+\abstract
+    {Данная работа посвящена методам анализа тематической структуры большой текстовой коллекции и её динамики во времени.
+    В работе предлагается тематическая модель, учитывающая метки времени документов, и использующая подход аддитивной регуляризации ARTM. Разрабатываются критерии устойчивости и полноты для оценки качества модели. Модель обучена на коллекции пресс-релизов внешнеполитических ведомств ряда стран за 10 лет.
+
+\bigskip
+\textbf{Ключевые слова}: \emph {тематическая модель,  аддитивная регуляризация, LDA, критерий устойчивости, критерий полноты}.}
+
+\begin{document}
+\maketitle
+%\linenumbers
+\section{1. Введение}
+Данная работа посвящена методам анализа тематической структуры большой текстовой коллекции и её динамики во времени.
+
+\textit{Тематическая модель} коллекции текстовых документов разбивает коллекцию на некоторое количество тем и определяет, к каким темам относятся документы, а также какие слова образуют каждую тему. Эта задача решается с помощью \textit{вероятностного тематического моделирования} -- пользователем фиксируется число тем, после чего модель находит распределения $\phi_{wt}=p(w|t)$ слов по темам и $\theta_{td}=p(t|d)$ тем по документам.
+
+ Классический подход к решению задачи тематического моделирования -- это латентное размещение Дирихле (LDA), описанный в работе \cite{blei2003latent}. Этот метод предполагает, что плотности $\phi_{wt}$ и $\theta_{td}$ имеют распределение Дирихле, которое является в данном случае байесовским регуляризатором модели, который предотвращает переобучение. Но эта модель не даёт возможности для добавления требований различности тем или разреженности распределений $\phi_{wt}$ и $\theta_{td}$ и внесения других ограничений на модель. 
+ 
+ Другим подходом, устраняющим эти ограничения, является аддитивная регуляризация тематических моделей (ARTM, \cite{voron-artm}). Он позволяет записать любое количество дополнительных требований к тематической модели в виде взвешенной суммы критериев, добавляемых к основному функционалу логарифмированного правдоподобия. В \cite{voron-artm} показано, что функционалы правдоподобия многих известных тематических моделей, таких как LDA и PLSA, допускают такое представление, то есть фактически являются частными случаями регуляризации. При этом, в отличие от стандартных задач машинного обучения, таких как классификация и регрессия, в тематическом моделировании возникает огромное разнообразие регуляризаторов, направленных на учёт различной дополнительной информации о текстовой коллекции.
+
+\textit{Темпоральные тематические модели} учитывают дополнительно метки времени $y_d$, привязанные к каждому документу $d$. Помимо распределений $\phi_{wt}$ и $\theta_{td}$, вводится распределение каждой темы во времени $\xi_{yt}=p(y|t)$, что позволяет рассмотреть динамику изменения тем во времени.
+
+Одним способом \cite{temporal-griffiths}, \cite{temporal-hall} анализа тем во времени является разбиение исходной коллекции документов на пачки относящихся к одному временному интервалу и построение отдельной тематической модели для каждой пачки, с последующим анализом тем.
+
+Способы явного включения времени в вероятностную модель чаще всего основаны на байесовском подходе: желаемые особенности модели добавляются с помощью указания априорных распределений на параметры. Можно выделить два направления: использование непрерывного априорного распределения $p(y|t)$ времени для каждой темы и модели с дискретным временем, основанные на Марковском свойстве. Относящаяся к первому классу модель TOT (Topics Over Time), \cite{ToT} расширяет модель LDA, задавая априорное бета-распределение времени для каждой темы. Минусом этой модели является то, что в реальной жизни темы могут быть распределены совсем иначе и хочется найти их истиное распределение.
+
+В данной работе с помощью подхода ARTM предлагается темпоральная тематическая модель, обученная на коллекции пресс-релизов внешнеполитических ведомств ряда стран за 10 лет, предлагается метрика для отбора событийных тем в модели, а также проводится анализ устойчивости модели с метками времени. Коллекция пресс-релизов собрана с вебсайтов внешнеполитических ведомств.
+
+\section{2. Постановка задачи}
+Пусть $D$ -- конечный набор текстов, называемый коллекцией, а $W$ -- набор слов, из которых состоят тексты (словарь). Для каждого слова $w$ известно, сколько раз оно встречается в данном документе $d$, обозначим эту частоту как $n_{dw}$. Длину документа обозначим $n_d$. Предположим, что появление каждого слова в каждом документе связано с некоторой латентной переменной из некоторого множества тем $T$.
+
+\medskip
+
+На множестве $D\times W\times T$ введём вероятностное пространство с плотностью $p(d,w,t)$. Примем \textit{гипотезу условной независимости} -- будем считать, что вероятность появления слова $w$, относящегося к теме $t$ в документе $d$ не зависит от документа и описывается общим для всей коллекции распределением:
+\begin{equation} \label{cond1}
+p(w | d, t) \; = \; p(w | t).
+\end{equation}
+Используя формулу полной вероятности и данную гипотезу, получаем:
+\begin{equation} \label{gen1}
+p(w | d) = \sum_{t \in T} { p(t|d) p(w|t) }.
+\end{equation}
+Параметрами модели являются условные вероятности $\phi_{wt}\equiv p(w|t)$ и $\theta_{td}\equiv p(t|d)$.
+Известными данными в данной задаче является матрица $F = (\hat{p}(w|d))_{W \times D}$ частотных оценок вероятностей $p(w|d)$:
+\begin{equation} 
+\hat{p}(w|d) = \frac{n_{dw}}{n_d}. \notag
+\end{equation}
+
+Построить \textit{тематическую модель} коллекции $D$ значит найти множество тем $T$ и стохастические матрицы $\Phi = (\phi_{wt})_{W \times T}$ и $\Theta = (\theta_{td})_{T \times D}$, столбцы которых --- распределения слов по темам и тем по документам. Поиск этих матриц производится методом максимизации логарифма правдоподобия коллекции:
+\begin{equation} \label{likelihood}
+\log \mathscr{L}(\Phi, \Theta) = \sum_{d \in D}{ \sum_{w \in W} { n_{dw} \log{ \sum_{t \in T} {\phi_{wt} \theta_{td}} } } } \longrightarrow \max_{\Phi, \Theta}.
+\end{equation}
+
+\medskip
+
+При добавлении модальности времени вводится аналогичная гипотеза условной независимости:
+\begin{equation} \label{cond1}
+p(y | d, t) \; = \; p(y | t),
+\end{equation}
+где $y$ -- момент времени.
+По формуле полной вероятности выражаем распределение моментов времен по документам через смесь распределений:
+\begin{equation} \label{gen2}
+p(y | d) = \sum_{t \in T} { p(t|d) p(y|t) }.
+\end{equation}
+Так как в задаче каждому документу $d$ приписана метка времени $y_d \in Y$, есть эмпирическое распределение: 
+\begin{equation} 
+\hat{p}(y | d) = [y=y_d]. \notag
+\end{equation}
+
+Аналогично ставя задачу оптимизации для матриц \[\Xi = (\xi_{yt})_{Y \times T}\text{ и }\Theta = (\theta_{td})_{T \times D}\] и взвешенно суммируя две функции правдоподобия, получаем общую задачу оптимизации для темпоральной тематической модели:
+\begin{equation} \label{likelihood1}
+\mathscr{L}(\Phi, \Theta, \Xi) = \mathscr{L}_1(\Phi, \Theta) + \tau\mathscr{L}_2(\Theta, \Xi),
+\end{equation}
+\begin{equation}
+\log \mathscr{L}(\Phi, \Theta, \Xi)  \longrightarrow \max_{\Phi, \Theta, \Xi}
+\end{equation}
+
+\medskip
+
+Задача максимизации правдоподобия имеет бесконечно много локальных максимумов, что влечёт за собой неустойчивость модели.
+
+В подходе ARTM ~\cite{voron-artm} авторы предлагают в оптимизационной задаче (\ref{likelihood}) добавить к логарифму правдоподобия еще $r$ функционалов: $R_i(\Phi, \Theta),\;i = 1,\dots,r$ называемых {\it регуляризаторами}, каждый со своим неотрицательным весом $\tau_i$:
+
+\begin{equation} \label{likelihood_r}
+\begin {cases}
+\quad R(\Phi, \Theta) = \sum_i {\tau_i R_i(\Phi, \Theta)}, \qquad \log \mathscr{L}(\Phi, \Theta) + R(\Phi, \Theta) \longrightarrow \max\limits_{\Phi, \Theta}, \\[15pt]
+\qquad\qquad \phi_{wt} \geqslant 0, \quad \theta_{td} \geqslant 0, \quad \sum\limits_{w}\phi_{wt} = 1, \quad \sum\limits_{t}\theta_{td} = 1.
+\end{cases}
+\end{equation}
+
+В данной работе используются следующие регуляризаторы из предложенных ~\cite{voron-artm} авторами:
+\begin{enumerate}
+\item Регуляризатор сглаживания
+\item Регуляризатор разреживания
+\item Регуляризатор декорреляции
+\end{enumerate}
+
+
+\newpage
+\section{2. Метрики для оценки модели}
+
+От распределений $\phi_{wt}$ и $\theta_{td}$, полученных в ходе построения тематической модели, требуется обладание многими полезными свойствами: разреженностью --- большим числом нулей, 
+отсутствием фоновых слов в предметных темах, различностью предметных тем друг от друга, плавностью изменения тем во времени, а главное --- интерпретируемостью.
+
+Будем следить за набором дополнительных метрик, позволяющих наблюдать за процессом сходимости и определять, обладают ли искомые распределения $\phi_{wt}$ и $\theta_{td}$ перечисленными свойствами.
+
+\begin {enumerate}
+
+{\bf \item  Перплексия} --- величина, выражающаяся через правдоподобие выборки и позволяющая отслеживать сходимость метода оптимизации:
+\begin{align*}\text{Perplexity}(\Phi, \Theta) \; &= \; \exp \Bigl(-\frac1n \sum_{d \in D} \sum_{w \in W} n_{dw}  \log p(w | d)  \Bigr), \\[7pt] 
+p(w|d) \; &= \; \sum_{t \in T} \phi_{wt} \theta_{td}, \quad n \; \equiv \; \sum_{d \in D} \sum_{w \in W} n_{dw}.\end{align*}
+
+Численное значение перплексии не имеет интерпретации и позволяет лишь сравнивать алгоритмы между собой. Значения чем меньше, тем лучше.
+
+{\bf \item Разреженность матриц $\boldsymbol{\Phi}$ и $\boldsymbol{\Theta}$} --- доля нулевых элементов. 
+
+В предметных темах разреженность достигает $90 - 95\%$, поэтому, для хорошей тематической модели разреженность необходима.
+
+\end{enumerate}
+
+\vspace{10pt}
+
+\noindent
+Лексическим {\it ядром темы} будем называть множество слов, отличающих данную тему от остальных:
+\begin{align*}W_t \; = \; \{ w \in W \; | \; p(t|w) > \delta \}.
+\end{align*}
+
+\smallskip 
+
+\noindent
+Параметр $\delta = 0.25$, подбирается с тем расчетом, чтобы {\it размер ядра}~$|W_t|$ был от 20 до 200 слов.
+
+\vspace{20pt}
+
+На основе ядра темы строятся следующие две оценки:
+
+\begin{enumerate}
+	\setcounter{enumi}{2}
+	
+	{\bf \item Чистота} --- суммарная вероятность слов ядра:
+	\begin{align*}
+	\text{Purity}(t) \; = \; \sum_{w \in W_t}{p(w|t)} \; = \; \sum_{w \in W_t}{\phi_{wt}}
+	\end{align*}
+	
+	показывает насколько хорошо тема описывается своим ядром. Чем выше, тем лучше.
+	
+	{\bf \item Контрастность} --- средняя вероятность встретить слова ядра в конкретной теме:
+	\begin{align*}
+	\text{Contrast}(t) \; = \; \frac{1}{|W_t|} \sum_{w \in W_t} {p(t|w)}
+	\end{align*}
+	
+	При большой контрастности тема однозначно угадывается по своему ядру, при малой -- тема размывается, становится нечеткой.
+	
+\end{enumerate}
+\vspace{20pt}
+
+
+Для исследования моделей со временем, где каждому документу $d$ привязана метка времени $y_d \in Y$ из множества временных отчетов,  добавим еще три характеристики:
+
+\begin{enumerate}
+	\setcounter{enumi}{4}
+	
+	{\bf \item Разреженность распределений $\boldsymbol{p(t|y)}$} --- доля нулевых элементов среди всех распределений тем во времени. Позволяет оценивать воздействие на модель регуляризатора {\it разреживания $p(t|y)$}.
+	
+	{\bf \item Колебание темы во времени:} 
+	\begin{align*}\text{Variation}(t) \; = \; \sum_{ y \in Y}{ \bigl| \, \sqrt{p(y|t)\,} \; - \; \sqrt{p(y - 1|t)\,} \, \bigr|}.
+	\end{align*}
+	Меньшие значения соответствуют более плавному изменению темы во времени.
+	
+	{\bf \item Событийность темы.}
+	
+	Большое число тем для потоков текстовых документов можно разбить на два класса: постоянные темы и темы-события.
+	
+	Постоянные темы присутствуют на протежении всего промежутка времени, распределение $p(y|t)$ для такой темы близко к равномерному.  
+	
+	Тема-событие характеризуется внезапным появлением и постепенным затуханием во времени, её распределение $p(y|t)$ обладает большим числом нулей.
+	
+	\bigskip
+	
+	В данной работе предлагается ряд метрик, которыми можно мерить событийность темы.	
+
+\end{enumerate}
+
+\subsection{Меры событийности тем}
+Будем считать, что множество $Y$  имеет вид отрезка $[0; M]$.
+\begin{itemize}
+	{\bf \item Доля нулей слева и справа.}
+	Для $p(y|t)$ найдем $y_l = \min\{y \in Y\ |\ p(y|t) > \epsilon\}$ и $y_r = \max\{y\in Y\ |\ p(y|t) > \epsilon\}$. Введем меру как суммарная доля нулей распределения слева и справа. Константа $\epsilon$ определяет какие значения в $p(y|t)$ мы полагаем равными нулю и служит для устранения шума.
+	\begin{align*}
+	\text{ZerosLeftRight}(t) = 1 - \frac{y_r-y_l}{M};
+	\end{align*}
+	Чем метрика больше, тем тема событийнее.	
+	\vspace{10pt}
+	{\bf \item Дисперсия $p(y|t)$.} Чем дисперсия меньше, тем тема событийнее.
+	\vspace{10pt}
+	{\bf \item Delta-AUC.} Для всех $0 < \Delta \leq M$ найдем $0 \leq y_0 \leq M - \Delta$ такой, что интеграл $$S = \int_{y_0}^{y_0+\Delta}p(y|t) dy$$ максимален. Построим график зависимости $1-S$ от $\Delta$. Для равномерного распределения он будет иметь вид убывающей прямой, а для событийных тем он будет сначала резко убывать вниз, затем плавно. Назовем Delta-AUC метрикой площадь под этим графиком. Можно понять, что для событийных тем она будет меньше.
+	На Рис. ~\ref{fig:delta_auc_roc_examples} изображены примеры распределений и Delta-ROC кривых для них.
+	
+\begin{figure}[!h]
+	\centering
+	\subfloat[Равномерное распределение]{\includegraphics[width=0.5\textwidth]{images/uniform_distr.eps}}
+	\subfigure{\includegraphics[width=0.5\textwidth]{images/uniform_distr_delta_auc_roc.eps}}
+
+	\subfloat[Распределение с одним пиком]{\includegraphics[width=0.5\textwidth]{images/one_peak.eps}}
+	\subfigure{\includegraphics[width=0.5\textwidth]{images/one_peak_delta_auc_roc.eps}}
+
+	\subfloat[Распределение с двумя пиками]{\includegraphics[width=0.5\textwidth]{images/two_peaks.eps}}
+	\subfloat{\includegraphics[width=0.5\textwidth]{images/two_peaks_delta_auc_roc.eps}}
+	\caption{Примеры распределений и Delta-ROC кривых для них.}
+	\label{fig:delta_auc_roc_examples}
+\end{figure}
+\end{itemize}
+
+В метрике ZerosLeftiRight есть недостатки. Можно придумать два распределения, равномерное и событийное, для которых доли нулей слева и справа будут совпадать. Аналогично, можно придумать пример для дисперсии.
+
+\newpage
+
+\section{3. Базовый эксперимент}
+В рамках первичного эксперимента была построена тематическая модель без модальности времени с регуляризатором сглаживания. Такая регуляризация является аналогом известной тематической модели LDA \cite{blei2003latent}.
+
+Данными является коллекция официальных пресс-релизов
+внешнеполитических ведомств ряда стран, на английском
+языке. Более 20 тыс. сообщений за 10 лет.
+
+Недостатки модели LDA в том, что темы часто получаются скоррелированными между собой и содержат слова из общей лексики. На Рис. ~\ref{fig:lda_model_metrics} показаны основные метрики модели. Для построения использовалась библиотека BigARTM. Количество тем 100. На все темы применялся регуляризатор сглаживания. Разреженность матрицы $\Phi$ -- $0.0\%$, матрицы $\Theta$ -- $0.4\%$. Средняя контрастность ядра по темам -- $0.410$. Средняя чистота ядра -- $0.114$. Средняя корреляция между темами $0.109$.
+
+В табл. ~\ref{table:lda_topics} представлены примеры тем для модели.
+
+\begin{table}[!htbp]
+\centering
+\begin{tabular}{| p{15cm} |}
+\hline
+Ключевые слова темы \\ \hline
+state, foreign, secretary, president, relationship, very, unite, security, meet, thank, issue, together, minister, here, today \\ \hline
+question, department, state, information, release, site, office, view, subject, u.s., internet, email, answer, page, should \\ \hline
+state, question, designate, missile, under, russia, designation, act, order, entity, sanction, department, europe, decision, council \\ \hline
+woman, society, support, opportunity, world, more, tunisia, violence, gender, civil, leader, community, business, international, help \\ \hline
+question, inaudible, mean, talk, don, thing, more, secretary, kind, term, very, ask, try, actually, obviously \\ \hline
+thank, remark, society, clinton, civil, secretary, here, today, welcome, president, very, minister, foreign, meet, madam \\ \hline
+very, thank, much, state, here, many, inaudible, remark, country, together, great, clinton, visit, more, important \\ \hline
+secretary, clinton, president, defense, question, unite, state, government, both, nato, administration, gate, missile, thank, very \\
+\hline
+\end{tabular}
+\caption{Ключевые слова тем в модели LDA}
+\label{table:lda_topics}
+\end{table}
+
+Видно, что в темах содержится много слов, которые не характеризуют ядро темы, а являются фоновой лексикой корпуса.
+
+\begin{figure}[!htbp]
+	\centering
+	\subfloat[Матрица корреляций между темами]{\includegraphics[scale=0.25]{images/LDA_corr.eps}}
+	\hspace*{1.0in}\subfloat[График перплексии модели по итерациям]{\includegraphics[scale=0.35]{images/LDA_perplexity.eps}}
+	
+	\subfloat[График разреженности матриц $\Phi$ и $\Theta$ по итерациям]{\includegraphics[scale=0.35]{images/LDA_sparsity.eps}}
+	\hspace*{1.0in}\subfloat[График чистоты и контрастности модели по итерациям]{\includegraphics[scale=0.35]{images/LDA_contrast_purity.eps}}
+
+	\subfloat[Срез матрицы $\Phi$ для первых 200 слов]{\includegraphics[scale=0.35]{images/LDA_Phi.eps}}
+	\hspace*{1.0in}\subfloat[Срез матрицы $\Theta$ для первых 50 документов]{\includegraphics[scale=0.35]{images/LDA_Theta.eps}}
+	\caption{Графики для модели с регуляризатором сглаживания фоновых тем}
+	\label{fig:lda_model_metrics}
+\end{figure}
+
+\newpage
+
+\section{4. Эксперимент с модальностью времени}
+В рамках основного эксперимента к предыдущей модели были добавлены регуляризаторы декорреляции, разреживания матриц $\Phi$ и $\Theta$, а также были учтены метки времени документов. Меткой времени в данном случае являлся месяц публикации статьи. Все месяцы были пронумерованы числами от 0 до 146.
+
+На Рис. ~\ref{fig:temporal_model_metrics} приведены аналогичные Рис. ~\ref{fig:lda_model_metrics} графики. В новой модели матрицы стали разреженнее, темы более интепретируемы и декоррелированы. Разреженность матрицы $\Phi$ достигла $85.3\%$, матрицы $\Theta$ -- $73.8\%$. Средняя контрастность ядра по темам -- $0.540$. Средняя чистота ядра -- $0.183$. Средняя корреляция между темами $0.151$.
+
+В таблице ~\ref{table:eventness_topics} приведены примеры наиболее событийных тем с точки зрения метрики Delta-AUC по 15 топ-слов в распределении.
+
+\begin{table}[!htbp]
+\centering
+\begin{tabular}{| p{15cm} | l |}
+\hline
+Ключевые слова темы & Delta-AUC \\ \hline
+ambassador, question, report, state, material, right, facility, party, return, concern, fuel, government, answer, venezuela, reactor & 0.0010 \\ \hline
+secretary, those, number, process, very, question, under, country, document, here, assistant, important, forward, brief, congress & 0.0086 \\ \hline
+turkey, state, japan, investment, economic, unite, economy, trade, turkish, apec, vietnam, company, business, japanese, country & 0.0123 \\ \hline
+very, minister, people, inaudible, president, here, important, prime, government, madame, opportunity, forward, help, future, secretary & 0.0132 \\ \hline
+applause, woman, thank, family, child, life, here, help, many, more, world, today, every, honor, service & 0.0170 \\ \hline
+egypt, egyptian, reform, democratic, more, secretary, election, process, support, president, security, need, those, term, very & 0.0221 \\ \hline
+foreign, state, very, relationship, president, secretary, unite, thank, minister, meet, issue, security, much, together, discuss & 0.0247 \\ \hline
+question, thank, next, issue, operator, line, open, meet, term, process, again, both, please, comment, country & 0.0287 \\ \hline
+north, korea, korean, question, program, weapon, president, state, south, international, rice, september, talk, intelligence, security & 0.0341 \\ \hline
+secretary, assistant, deputy, state, issue, affair, negroponte, hill, john, ambassador, rice, october, question, armitage, condoleezza  & 0.0641 \\
+\hline
+\end{tabular}
+\caption{Примеры событийных тем и значения Delta-AUC для них}
+\label{table:eventness_topics}
+\end{table}
+
+На рис. ~\ref{fig:event_distributions} показаны распределения для некоторых событийных тем.
+
+\begin{figure}[!h]
+	\centering
+	\subfigure{\includegraphics[width=0.5\textwidth]{images/event1.eps}}
+
+	\subfigure{\includegraphics[width=0.5\textwidth]{images/event2.eps}}
+
+	\subfloat{\includegraphics[width=0.5\textwidth]{images/event3.eps}}
+	\caption{Распределения некоторых событийных тем}
+	\label{fig:event_distributions}
+\end{figure}
+
+В табл. ~\ref{table:noneventness_topics} приведены примеры не событийных тем с точки зрения метрики Delta-AUC по 15 топ-слов в распределении.
+
+\begin{table}[!thbp]
+\centering
+\begin{tabular}{| p{15cm} | l |}
+\hline
+Ключевые слова темы & Delta-AUC \\ \hline
+cote, ricewell, hungary, diamond, brimmer, hungarian, ricei, questionand, kimberley, tribe, allen, esther, questioni, questionmadame, gbagbo & 0.6810 \\ \hline
+u.s., designate, flood, water, designation, provide, company, conservation, sea, organization, entity, under, million, state, include & 0.6989 \\ \hline
+mexico, development, fund, mexican, u.s., sector, initiative, support, country, law, group, train, private, corporation, bank & 0.7119 \\ \hline
+aid, food, development, more, water, usaid, country, program, percent, need, million, people, resource, investment, administrator & 0.7288 \\ \hline
+court, criminal, arrest, crime, tribunal, justice, former, war, rwanda, trial, sentence, charge, genocide, yugoslavia, conviction & 0.7308 \\ \hline
+visa, entry, country, applicant, department, submit, program, application, may, select, receive, state, process, service, must & 0.7321 \\ \hline
+support, president, unite, commission, u.s., national, election, january, country, include, state, council, group, december, nation & 0.7588 \\ \hline
+health, medical, care, treatment, cancer, mali, hiv, prevention, center, los, pepfar, child, drug, expo, pavilion & 0.8122 \\ \hline
+press, state, department, medium, brief, identification, u.s., secretary, a.m., card, event, photo, p.m., issue, street & 0.8314 \\ \hline
+award, corporate, anniversary, embassy, winner, ceremony, excellence, compound, company, present, employee, whale, outstanding, honor, build & 0.8315 \\
+\hline
+\end{tabular}
+\caption{Примеры не событийных тем и значения Delta-AUC для них}
+\label{table:noneventness_topics}
+\end{table}
+
+На рис. ~\ref{fig:nonevent_distributions} показаны распределения некоторых несобытийных тем.
+
+\begin{figure}[!h]
+	\centering
+	\subfigure{\includegraphics[width=0.5\textwidth]{images/nonevent1.eps}}
+
+	\subfigure{\includegraphics[width=0.5\textwidth]{images/nonevent2.eps}}
+
+	\subfloat{\includegraphics[width=0.5\textwidth]{images/nonevent3.eps}}
+	\caption{Распределения некоторых событийных тем}
+	\label{fig:nonevent_distributions}
+\end{figure}
+\end{itemize}
+
+\begin{figure}[!h]
+	\centering
+	\subfloat[Матрица корреляций между темами]{\includegraphics[scale=0.25]{images/Temporal_corr.eps}}
+	\hspace*{1.0in}\subfloat[График перплексии модели по итерациям]{\includegraphics[scale=0.35]{images/Temporal_perplexity.eps}}
+	
+	\subfloat[График разреженности матриц $\Phi$ и $\Theta$ по итерациям]{\includegraphics[scale=0.35]{images/Temporal_sparsity.eps}}
+	\hspace*{1.0in}\subfloat[График чистоты и контрастности модели по итерациям]{\includegraphics[scale=0.35]{images/Temporal_contrast_purity.eps}}
+
+	\subfloat[Срез матрицы $\Phi$ для первых 200 слов]{\includegraphics[scale=0.35]{images/Temporal_Phi.eps}}
+	\hspace*{1.0in}\subfloat[Срез матрицы $\Theta$ для первых 50 документов]{\includegraphics[scale=0.35]{images/Temporal_Theta.eps}}
+	\caption{Графики для модели с модальностью времени}
+	\label{fig:temporal_model_metrics}
+\end{figure}
+
+На Рис. ~\ref{fig:temporal_sorted_by_auc_psi} показана матрица $\Xi$, столбцы которой отсортированы по введённой выше метрике событийности Delta-AUC. Видно, что в левой части матрицы, где Delta-AUC меньше, распределения столбцов сконцентрированы вокруг нескольких точек. В правой же части матрицы распределения размазаны. Это соответствует нашему представлению о событийности темы. Разреженность матрицы достигла $79.9\%$.
+
+\begin{figure}[!h]
+	\includegraphics[scale=0.5]{images/Temporal_sorted_by_auc_Xi.eps}
+	\caption{Матрица $\Xi$}
+	\label{fig:temporal_sorted_by_auc_psi}
+\end{figure}
+
+\clearpage
+
+\section{5. Эксперимент с устойчивостью модели}
+Модель со временем была обучена на 25 различных начальных приближениях матриц $\Theta$, $\Phi$, $\Xi$ с целью понять, какие свойства модели устойчивы, а какие нет.
+
+Модель из второго эксперимента оказалась неустойчивой. Из-за больших по модулю коэффициентов регуляризации при регуляризаторах ($\tau_{\Phi} = \tau_{\Theta} = -0.2$) разреживания матриц $\Phi$ и $\Theta$ в большинстве случаях матрицы становились вырожденными. Уменьшив регуляризаторы до значения $-0.1$, и включая их только на три последние итерации алгоритма, удалось получить более устойчивую модель, для которой на Рис. ~\ref{fig:consistency_model_metrics} приведены результаты.
+
+\begin{figure}[!htbp]
+	\centering
+	\subfloat[График перплексии модели по итерациям]{\includegraphics[scale=0.4]{images/Consistency_perplexity.eps}}
+	\hspace*{1.0in}\subfloat[График разреженности матриц $\Phi$ и $\Theta$ по итерациям]{\includegraphics[scale=0.4]{images/Consistency_sparsity.eps}}
+	
+	\subfloat[График чистоты и контрастности модели по итерациям]{\includegraphics[scale=0.5]{images/Consistency_contrast_purity.eps}}
+	\hspace*{1.0in}\subfloat[Боксплот распределений метрики Delta-AUC в зависимости от номера запуска]{\includegraphics[scale=0.4]{images/AUC_boxplot.eps}}
+	\caption{Графики для эксперимента с устойчивостью модели с регуляризатором сглаживания фоновых тем}
+	\label{fig:consistency_model_metrics}
+\end{figure}
+
+По-прежнему в нескольких случаях модель выродилась, но в остальных случаях метрики стабильны.
+
+Была исследована способность модели находить одни и те же темы при разных начальных приближениях матриц. 
+
+Опишем сначала алгоритм для двух матриц $\Phi_1$ и $\Phi_2$. Обозначим $\Phi(:, i)$ -- распределение $i$-ой темы в матрице $\Phi$. Введём матрицу $T = (t_{ij})$ расстояний между распределенями. Конкретно, $t_{ij} = H\big(\Phi_1(:, i), \Phi_2(:, j)\big)$, где $H(P, Q) = \frac{1}{\sqrt{2}}\sqrt{\sum_{i=1}^{k}(\sqrt{p_i}-\sqrt{q_i})^2}$ -- расстояние Хеллингера между дискретными распределениями.
+
+Применим Венгерский алгоритм для матрицы $T$. Венгерский алгоритм решает задачу о назначениях. В нашем случае, алгоритм попытается найти каждую тему в другой модели, то есть сгенерировать перестановку на матрице $\Phi_2$.
+
+Для запусков из различных начальных приближений будем считать матрицу $\Phi_0$, получившуюся на первой итерации, эталонной. Далее, для остальных итераций применим Венгерский алгоритм к $\Phi_0$ и $\Phi_i$ и посчитаем среднюю стоимость -- среднее расстояние Хеллингера для перестановки тем.
+
+В четырех случаях это среднее было равно $0.707$, так как матрицы выродились. В остальных случаях среднее значение колебалось около $0.038$ со стандартным отклонением $0.001$.
+
+В Таблице ~\ref{table:hellinger_pair_topics} показаны примеры сопоставленных друг другу тем. Оказалось, что взяв расстояние Хеллингера и применив Венгерский алгоритм, не удается получить адекватное сопоставление тем друг другу. Однако устойчивость модели к восстановлению одних и тех же матриц при разных начальных приближениях проверить удалось.
+
+\begin{table}[!h]
+\centering
+\begin{tabular}{| p{5cm} | p{5cm} | l |}
+\hline
+Ключевые слова тем в матрице $\Phi_0$ & Ключевые слова тем в матрице $\Phi_0$ & Расстояние Хеллингера \\ \hline
+musical, customer, ensue, walt, nongovernment, release, witness, ban & unite, nation, people, state, world, global, international, national & 0.036 \\ \hline
+musical, customer, ensue, walt, nongovernment, release, witness, ban & country, development, help, partner, support, sector, need, more & 0.028 \\ \hline
+customer, walt, release, witness, ban, consolidate, representative, solve & assistant, secretary, state, government, meet, unite, liberia, congo & 0.104 \\ \hline
+musical, customer, ensue, walt, nongovernment, release, witness, ban & attack, state, unite, terrorist, terrorism, government, release, information & 0.044 \\ \hline
+musical, customer, walt, release, witness, ban, consolidate, representative & defense, missile, nato, question, poland, threat, unite, state & 0.028 \\
+\hline
+\end{tabular}
+\caption{Сопоставленные друг другу темы для матриц $\Phi_0$ и $\Phi_1$}
+\label{table:hellinger_pair_topics}
+\end{table}
+
+На Рис. ~\ref{fig:auc_distr_over_iterations} показаны распределения метрики Delta-AUC для запусков из разных начальных приближений.
+
+\begin{figure}[!h]
+	\centering
+	\includegraphics[scale=0.5]{images/AUC_Boxplot.eps}
+	\caption{Распределения Delta-AUC значений по топикам для разных начальных приближений}
+	\label{fig:auc_distr_over_iterations}
+\end{figure}
+
+\section{5. Заключение}
+
+Произведено сравнение моделей LDA и ARTM с модальностью времени. Показано, что в модели ARTM темы получаются более интепретируемые, фоновая лексика уходит в фоновые темы. Матрицы $\Phi$ и $\Theta$ разреженнее.
+
+Предложена метрика для отбора событийных тем Delta-AUC, основной результат которой можно видеть на Рис. ~\ref{fig:temporal_sorted_by_auc_psi}.
+
+Был поставлен эксперимент с устойчивостью модели со временем. 
+
+\clearpage
+
+\begin{thebibliography}{1}
+\bibitem{doykov}
+    \BibAuthor{Дойков Н. В.}
+    \BibTitle{Адаптивная регуляризация вероятностных тематических моделей.}
+	\BibYear{2015}
+	
+	\BibUrl{http://www.machinelearning.ru/wiki/images/9/9f/2015_417_DoykovNV.pdf}
+
+\bibitem{voron2013}
+    \BibAuthor{Воронцов\;К.\,В.}
+    \BibTitle{Вероятностное тематическое моделирование.}
+    Москва, 2009.
+    
+    \BibUrl{http://www.machinelearning.ru/wiki/images/2/22/Voron-2013-ptm.pdf}
+    
+\bibitem{voron-artm}
+	\BibAuthor{Воронцов\;К.\,В.}
+	\BibTitle{Аддитивная Регуляризация Тематических Моделей Коллекций Текстовых Документов}
+	\BibJournal{Доклады РАН, Т.455, №3. C.268-271}
+	\BibYear{2014}
+    
+\bibitem{lda-posthoc}
+    \BibAuthor{David Hall, Daniel Jurafsky, Christopher D. Manning.}
+    \BibTitle{Studying the History of Ideas Using Topic Models.}
+	\BibUrl{https://web.stanford.edu/~jurafsky/hallemnlp08.pdf}
+	
+\bibitem{ToT}
+	\BibAuthor{Xuerui Wang, Andrew McCallum}
+	\BibTitle{Topics over Time: A Non-Markov Continuous-Time Model of Topical Trends}
+	\BibUrl{https://people.cs.umass.edu/~mccallum/papers/tot-kdd06.pdf}
+	
+\bibitem{blei2003latent}
+	\BibAuthor{Blei, David M and Ng, Andrew Y and Jordan, Michael I}
+	\BibTitle{Latent dirichlet allocation}
+	\BibJournal{the Journal of machine Learning research}
+	\BibYear{2003}
+	
+\bibitem{temporal-griffiths}
+	\BibAuthor{Griffiths T. L., Steyvers M.}
+	\BibTitle{Finding scientific topics}
+	\BibJournal{Proceedings of the National Academy of Sciences.}
+	\BibYear{2004}
+	
+\bibitem{temporal-hall}
+	\BibAuthor{Hall D., Jurafsky D., Manning C. D.}
+	\BibTitle{Studying the history of ideas using topic models}
+	\BibJournal{Proceedings of the conference on empirical methods in natural language processing / Association for Computational Linguistics.}
+	\BibYear{2008}	
+
+\end{thebibliography}
+
+
+
+% Решение Программного Комитета:
+%\ACCEPTNOTE
+%\AMENDNOTE
+%\REJECTNOTE
+\end{document}
